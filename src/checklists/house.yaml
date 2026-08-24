@@ -1,0 +1,150 @@
+# Чек-лист сбора данных: ДОМ / строения физлица
+# Продукт СОГАЗ «Персональное решение+»
+# Источник истины: "Заявление на страхование" (Приложение №2, форма по строениям, СОГАЗ)
+#
+# Формат поля — см. flat.yaml (единый).
+
+product: "Персональное решение+"
+object_type: house
+title: "Страхование дома / строений"
+
+sections:
+
+  - id: policyholder
+    title: "Информация о страхователе и выгодоприобретателе"
+    fields:
+      - { id: ph_fio,        label: "ФИО страхователя",            type: text, required: true }
+      - { id: ph_birthdate,  label: "Дата рождения",               type: date, required: true }
+      # Пол нужен карточке контрагента в СК. Обычно виден по отчеству — спрашивать
+      # стоит только тогда, когда отчества нет или оно нерусское.
+      - { id: ph_gender,     label: "Пол",                         type: enum, required: false, ai_hint: "определять по отчеству, вопрос задавать только при невозможности", options: [ {value: male, label: "Мужской"}, {value: female, label: "Женский"} ] }
+      - { id: ph_doc_type,   label: "Вид документа, удостоверяющего личность", type: enum, required: false, ai_hint: "по умолчанию паспорт РФ", options: [ {value: passport_rf, label: "Паспорт гражданина России"}, {value: other, label: "Иной документ"} ] }
+      # Карточка контрагента в СК хранит паспорт пятью отдельными полями, одной
+      # строкой их не заполнить: серия и номер разнесены, дата выдачи — поле-дата.
+      - { id: ph_doc_series, label: "Серия паспорта",              type: text, required: false, pattern: '\d{4}', format_hint: "четыре цифры" }
+      - { id: ph_doc_number, label: "Номер паспорта",              type: text, required: false, pattern: '\d{6}', format_hint: "шесть цифр" }
+      - { id: ph_doc_issue_date, label: "Дата выдачи паспорта",    type: date, required: false }
+      - { id: ph_doc_issuer, label: "Кем выдан паспорт",           type: text, required: false }
+      - { id: ph_doc_dept_code, label: "Код подразделения",        type: text, required: false, pattern: '\d{3}-?\d{3}', format_hint: "шесть цифр, например 770-001" }
+      - { id: ph_reg_addr,   label: "Адрес регистрации",           type: address, required: false }
+      - { id: ph_phone,      label: "Телефон",                     type: phone, required: true }
+      - { id: ph_email,      label: "E-mail",                      type: text, required: false }
+      # Свободным текстом это поле было бесполезно: в форме СОГАЗ выгодоприобретатель —
+      # радиогруппа из трёх фиксированных вариантов, и подставить туда произвольную
+      # фразу нельзя. Коды совпадают со value_map карты полей.
+      - { id: beneficiary,   label: "Выгодоприобретатель по страхованию имущества", type: enum, required: false, ai_hint: "по умолчанию — за счёт кого следует (не определён); банк — если имущество в залоге; страхователь — только если клиент прямо это сказал", options: [ {value: self, label: "Страхователь"}, {value: bank, label: "Банк (имущество в залоге)"}, {value: undefined, label: "За счёт кого следует (не определён)"} ] }
+
+  - id: territory
+    title: "Информация о территории страхования"
+    fields:
+      # type: address — приводится к виду справочника ФИАС (DaData): адрес в форме
+      # СК выбирается из подсказки, сырой текст она не разбирает.
+      - { id: terr_address,  label: "Адрес территории страхования", type: address, required: true }
+      - { id: terr_residence, label: "Характер проживания на территории", type: enum, required: true, options: [ {value: over_10m, label: "Более 10 месяцев в году"}, {value: upto_10m, label: "10 месяцев и менее / по выходным и праздникам"} ] }
+      - { id: terr_rent_short, label: "Строения сдаются в аренду на срок менее 3 месяцев", type: bool, required: true }
+      - { id: terr_for_sale,  label: "Строения выставлены на продажу", type: bool, required: true }
+      - { id: terr_guard_24,  label: "Круглосуточная охрана территории", type: bool, required: true }
+      - { id: terr_gated,     label: "Расположена в охраняемом коттеджном посёлке", type: bool, required: true }
+      - { id: terr_alarm,     label: "Исправная охранная сигнализация с выводом на МВД/ЧОП в основном строении", type: bool, required: true }
+
+  - id: buildings
+    title: "Описание строений"
+    help: "Основное строение + до 4 дополнительных. По каждому — материалы и характеристики"
+    fields:
+      - { id: building_list, label: "Строения", type: group, group_of: building, required: true }
+
+  - id: structures
+    title: "Описание сооружений (заборы, бассейны, ворота и т.п.)"
+    fields:
+      - { id: structure_list, label: "Сооружения", type: group, group_of: structure, required: false }
+
+  - id: other_coverage
+    title: "Прочие условия страхования (объекты)"
+    fields:
+      - { id: cov_household,   label: "Домашнее имущество — страховая сумма, руб.", type: money, required: false, help: "Согласно Описи или без составления Описи" }
+      - { id: cov_household_inventory, label: "Домашнее имущество по Описи", type: bool, required: false }
+      - { id: cov_valuables,   label: "Особо ценное имущество (по Описи) — страховая сумма, руб.", type: money, required: false }
+      - { id: cov_transport,   label: "Средства транспорта без регистрации (по Описи) — страховая сумма, руб.", type: money, required: false }
+      # Форма СК требует это уточнение, как только техника застрахована:
+      # без него договор не сохраняется. Спрашиваем только при указанной сумме.
+      - { id: cov_transport_garage, label: "Самоходная техника хранится в строении/помещении (сарай, гараж и т.п.)", type: enum, required: false, depends_on: { field: cov_transport, filled: true }, options: [ {value: in_building, label: "Да, в строении или помещении"}, {value: outside, label: "Нет, на открытой территории"} ] }
+      - { id: cov_landscape,   label: "Элементы ландшафтного дизайна (по Описи) — страховая сумма, руб.", type: money, required: false }
+      - { id: cov_land,        label: "Земельный участок — страховая сумма, руб.", type: money, required: false }
+      - { id: cov_liability,   label: "Гражданская ответственность — страховая сумма, руб.", type: money, required: false }
+
+  - id: risks
+    title: "Страховые случаи и дополнительные условия"
+    fields:
+      - { id: risk_list, label: "Выбранные риски", type: multi, required: true, help: "Наборы рисков по Правилам СОГАЗ", options: [ {value: fire, label: "Огонь"}, {value: surge, label: "Перепад напряжения"}, {value: water, label: "Вода"}, {value: water_in, label: "Проникновение воды"}, {value: nature, label: "Опасные природные явления и стихийные бедствия"}, {value: external, label: "Посторонние воздействия"}, {value: illegal, label: "Противоправные действия третьих лиц"}, {value: terror, label: "Террористический акт"} ] }
+      - { id: extra_conditions, label: "Дополнительные условия", type: text, required: false }
+      - { id: franchise, label: "Безусловная франшиза, руб.", type: money, required: false }
+
+  - id: other_info
+    title: "Иная информация (история)"
+    fields:
+      - { id: hist_damage_12m, label: "Был ли ущерб имуществу/третьим лицам за последние 12 месяцев", type: bool, required: true }
+      - { id: hist_damage_desc, label: "Уточнение по ущербу", type: text, required: false, depends_on: { field: hist_damage_12m, equals: true } }
+      - { id: hist_other_policy, label: "Объект был или остаётся застрахован (в любой страховой компании)", type: bool, required: true, help: "Неважно, договор уже закончился или ещё действует. По этим данным СК проверяет убытки: если их не было — будет скидка", ai_hint: "клиент ничего не сообщил — считать, что таких договоров нет" }
+      - { id: hist_other_policy_desc, label: "Страховая компания, номер и срок действия договора", type: text, required: false, depends_on: { field: hist_other_policy, equals: true } }
+      - { id: hist_loss_free_years, label: "Сколько последних лет подряд не было убытков", type: enum, required: false, depends_on: { field: hist_other_policy, equals: true }, help: "Влияет на размер скидки", options: [ {value: none, label: "Убытки были"}, {value: 1, label: "1 год"}, {value: 2, label: "2 года"}, {value: 3, label: "3 года"}, {value: 4, label: "4 года"}, {value: 5, label: "5 лет"}, {value: 6, label: "6 лет"}, {value: 7, label: "7 лет"}, {value: 8, label: "8 лет"}, {value: 9, label: "9 лет"}, {value: 10, label: "10 лет и более"} ] }
+      - { id: inspection_done, label: "Проводился осмотр имущества", type: bool, required: false }
+      - { id: inspection_desc, label: "Дата и ФИО проводившего осмотр", type: text, required: false, depends_on: { field: inspection_done, equals: true } }
+
+  - id: contract
+    title: "Условия договора"
+    fields:
+      - { id: term_months, label: "Срок действия договора, месяцев", type: number, required: true, ai_hint: "по умолчанию 12" }
+      - { id: payment_mode, label: "Порядок уплаты премии", type: enum, required: true, ai_hint: "по умолчанию раз в год — так оформляют в большинстве случаев", options: [ {value: yearly, label: "Раз в год"}, {value: quarterly, label: "Поквартально"}, {value: monthly, label: "Помесячно"} ] }
+
+  - id: declarations
+    title: "Подтверждения страхователя (критерии приёма на страхование)"
+    help: "Строение не аварийное, завершены стены/крыша/окна/двери, целевое использование, не под изъятием, нет режима ЧС"
+    fields:
+      - { id: decl_confirmed, label: "Страхователь подтверждает соответствие имущества критериям приёма на страхование", type: bool, required: true, help: "Не аварийное, не под снос/капремонт/реконструкцию, не под изъятием/арестом, завершены внешние стены/крыша/окна/двери, целевое использование, нет режима ЧС" }
+
+groups:
+  building:
+    title: "Строение"
+    fields:
+      # Тип строения в форме СК — справочник, свободное слово туда не вводится.
+      # Коды совпадают с ключами value_map карты полей.
+      # Справочники в форме РАЗНЫЕ: у основного строения — жилой дом, баня,
+      # таунхаус, дачный дом, часть дома на двух хозяев, иное; у дополнительного —
+      # жилое строение, баня, хозблок, гараж, летняя кухня, пункт охраны,
+      # мангальная, котельная, иное. Здесь их объединение.
+      - { id: b_name, label: "Тип строения", type: enum, required: true, ai_hint: "первое строение в списке — основное (жилой дом / дачный дом / таунхаус), остальные — дополнительные (баня, гараж, хозблок и т.п.)", options: [ {value: house, label: "Жилой дом"}, {value: dwelling, label: "Жилое строение"}, {value: townhouse, label: "Таунхаус"}, {value: dacha, label: "Дачный дом"}, {value: duplex, label: "Часть жилого дома на двух хозяев"}, {value: bath, label: "Баня"}, {value: utility, label: "Хозблок"}, {value: garage, label: "Гараж"}, {value: summer_kitchen, label: "Летняя кухня"}, {value: guard_post, label: "Пункт охраны"}, {value: bbq, label: "Мангальная"}, {value: boiler_room, label: "Котельная"}, {value: other, label: "Иное строение"} ] }
+      - { id: b_area, label: "Площадь строения, м²", type: number, required: true }
+      - { id: b_year, label: "Год постройки", type: number, required: true }
+      - { id: b_floors, label: "Этажность", type: number, required: false, ai_hint: "клиент не назвал этажность — строение считается одноэтажным" }
+      # Справочник формы СК: коды — ключи value_map карты полей.
+      - { id: b_foundation, label: "Фундамент (тип и материал)", type: enum, required: false, options: [ {value: strip_concrete, label: "Ленточный бетонный"}, {value: pier_concrete, label: "Столбчатый бетонный"}, {value: pier_metal, label: "Столбчатый металлический"}, {value: brick, label: "Кирпичный"}, {value: slab, label: "Железобетонная / монолитная плита"}, {value: pile_screw, label: "Свайный винтовой"}, {value: pile_concrete, label: "Свайный бетонный"}, {value: none, label: "Отсутствует"}, {value: other, label: "Иной"} ] }
+      - { id: b_walls, label: "Стены несущие", type: enum, required: true, options: [ {value: brick, label: "Кирпич"}, {value: blocks, label: "Стеновые блоки"}, {value: timber, label: "Брус"}, {value: log, label: "Бревно"}, {value: frame, label: "Каркасно-щитовой"}, {value: sandwich, label: "Сэндвич-панели"}, {value: other, label: "Иное"} ] }
+      - { id: b_ceilings, label: "Перекрытия", type: enum, required: true, options: [ {value: flammable, label: "Горючие"}, {value: non_flammable, label: "Негорючие"} ] }
+      - { id: b_utilities, label: "Инженерное оборудование и коммуникации", type: multi, required: false, options: [ {value: electricity, label: "Электричество"}, {value: gas_main, label: "Магистральный газ"}, {value: water, label: "Водопровод"}, {value: aogv, label: "АОГВ (газовый котёл)"}, {value: stove, label: "Печь / камин"}, {value: other, label: "Иное"} ] }
+      - { id: b_completed, label: "Строение завершено", type: bool, required: true }
+      - { id: b_unfinished_desc, label: "Незавершённые элементы", type: text, required: false, depends_on: { field: b_completed, equals: false } }
+      # Мансарда и веранда разделены: в форме СК это разные сущности, у каждой
+      # своя площадь и своя страховая сумма. Пока они стояли одним пунктом,
+      # галочка веранды не ставилась никогда, а вся сумма уходила в мансарду.
+      - { id: b_attic, label: "Наличие мансарды / веранды / подвального помещения", type: multi, required: false, options: [ {value: none, label: "Нет"}, {value: attic, label: "Мансарда"}, {value: veranda, label: "Веранда"}, {value: basement, label: "Подвальное помещение"} ] }
+      # Форма СК просит площади отдельными полями и без них оставляет пробел в
+      # договоре. Спрашиваем только тех, у кого мансарда (веранда) есть.
+      - { id: b_attic_area, label: "Площадь мансарды, м²", type: number, required: false, depends_on: { field: b_attic, contains: attic } }
+      - { id: b_veranda_area, label: "Площадь веранды, м²", type: number, required: false, depends_on: { field: b_attic, contains: veranda } }
+      - { id: b_works, label: "Отделочные и строительно-монтажные работы в строении", type: enum, required: false, options: [ {value: none, label: "Не проводятся"}, {value: with_fire, label: "Работы с использованием открытого огня/сварки"}, {value: no_fire, label: "Работы без открытого огня/сварки"} ] }
+      - { id: b_auto_fire_supp, label: "Исправная автоматическая система пожаротушения", type: bool, required: false }
+      - { id: b_fire_alarm, label: "Исправная пожарная сигнализация с выводом на пульт пожарной охраны", type: bool, required: false }
+      - { id: b_sauna_near, label: "Баня/сауна в доме или ближе 15 м от дома", type: bool, required: false }
+      - { id: b_special, label: "Иные особенности строения", type: text, required: false }
+      - { id: b_sum, label: "Страховая сумма, руб.", type: money, required: true }
+      - { id: b_sum_attic, label: "В т.ч. страховая сумма по мансарде, руб.", type: money, required: false, depends_on: { field: b_attic, contains: attic } }
+      - { id: b_sum_veranda, label: "В т.ч. страховая сумма по веранде, руб.", type: money, required: false, depends_on: { field: b_attic, contains: veranda } }
+
+  structure:
+    title: "Сооружение"
+    fields:
+      # Справочник формы СК: коды — ключи value_map карты полей.
+      - { id: s_name, label: "Тип сооружения", type: enum, required: true, options: [ {value: pool, label: "Бассейн"}, {value: gazebo, label: "Беседка"}, {value: winter_garden, label: "Зимний сад"}, {value: orangery, label: "Оранжерея"}, {value: greenhouse, label: "Теплица"}, {value: septic, label: "Септик"}, {value: fence, label: "Забор"}, {value: monument, label: "Надгробное сооружение (памятник)"}, {value: other, label: "Иное сооружение"} ] }
+      - { id: s_size, label: "Площадь (м²) или длина (м)", type: text, required: false }
+      - { id: s_material, label: "Основной материал", type: text, required: false }
+      - { id: s_sum, label: "Страховая сумма, руб.", type: money, required: true }

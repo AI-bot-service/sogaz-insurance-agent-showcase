@@ -1,0 +1,162 @@
+# Чек-лист сбора данных: КВАРТИРА / помещение физлица
+# Продукт СОГАЗ «Персональное решение+»
+# Источник истины: "Заявление на страхование (помещения) квартиры" (форма СОГАЗ)
+#
+# Формат поля:
+#   id:        уникальный ключ (латиница) — попадает в JSON заявки и переменные
+#   label:     человекочитаемый вопрос/название поля
+#   type:      text|textarea|number|money|bool|enum|multi|date|phone|address|group
+#              date    — приводится к ISO, агент переводит в ДД.ММ.ГГГГ
+#              phone   — приводится к +7XXXXXXXXXX
+#              address — приводится к виду справочника ФИАС через DaData
+#   required:  true|false  (обязательно для расчёта)
+#   options:   для enum/multi — список [{value, label}]
+#   pattern:   для text — регулярка формата (серия паспорта, код подразделения)
+#   format_hint: как выглядит правильное значение — уходит в подсказку модели
+#   help:      пояснение для клиента (бот использует при вопросе "а что это?")
+#   depends_on: {field: <id>, equals: <value>} | {field: <id>, contains: <value>}
+#   group_of:  для type=group — id вложенного шаблона (repeatable)
+#   ai_hint:   подсказка движку оцифровки, как извлекать значение из речи/фото
+
+product: "Персональное решение+"
+object_type: flat
+title: "Страхование квартиры / помещения"
+
+sections:
+
+  - id: policyholder
+    title: "Сведения о страхователе"
+    fields:
+      - { id: ph_fio,        label: "ФИО страхователя",              type: text,  required: true }
+      - { id: ph_birthdate,  label: "Дата рождения",                 type: date,  required: true }
+      # Пол нужен карточке контрагента в СК. Обычно виден по отчеству — спрашивать
+      # стоит только тогда, когда отчества нет или оно нерусское.
+      - { id: ph_gender,     label: "Пол",                           type: enum,  required: false, ai_hint: "определять по отчеству, вопрос задавать только при невозможности", options: [ {value: male, label: "Мужской"}, {value: female, label: "Женский"} ] }
+      - { id: ph_phone,      label: "Телефон",                       type: phone, required: true }
+      - { id: ph_email,      label: "E-mail",                        type: text,  required: false }
+      # Паспорт разнесён по полям карточки контрагента СК: серия, номер, дата
+      # выдачи, кем выдан и код подразделения — там это отдельные поля, и одной
+      # строкой их не заполнить.
+      - { id: ph_doc_type,   label: "Вид документа, удостоверяющего личность", type: enum, required: false, ai_hint: "по умолчанию паспорт РФ", options: [ {value: passport_rf, label: "Паспорт гражданина России"}, {value: other, label: "Иной документ"} ] }
+      - { id: ph_doc_series, label: "Серия паспорта",                type: text,  required: false, pattern: '\d{4}', format_hint: "четыре цифры" }
+      - { id: ph_doc_number, label: "Номер паспорта",                type: text,  required: false, pattern: '\d{6}', format_hint: "шесть цифр" }
+      - { id: ph_doc_issue_date, label: "Дата выдачи паспорта",      type: date,  required: false }
+      - { id: ph_doc_issuer, label: "Кем выдан паспорт",             type: text,  required: false }
+      - { id: ph_doc_dept_code, label: "Код подразделения",          type: text,  required: false, pattern: '\d{3}-?\d{3}', format_hint: "шесть цифр, например 770-001" }
+      - { id: ph_reg_addr,   label: "Адрес регистрации",             type: address, required: false }
+      - { id: ph_right,      label: "Право страхователя на имущество", type: enum, required: true, options: [ {value: owner, label: "Собственник"}, {value: tenant, label: "Наниматель / арендатор"}, {value: other, label: "Иное"} ] }
+
+  - id: object
+    title: "Объект страхования (адрес и характеристика)"
+    fields:
+      # type: address — значение приводится к виду справочника ФИАС (DaData) перед
+      # записью в заявку: адрес в форме СК выбирается из подсказки, сырой текст
+      # она не разбирает.
+      - { id: obj_address,   label: "Адрес объекта страхования",     type: address, required: true }
+      - { id: obj_area_total, label: "Общая площадь, м²",            type: number, required: true }
+      - { id: obj_area_living, label: "Жилая площадь, м²",           type: number, required: false }
+      - { id: obj_metal_door, label: "Металлическая входная дверь",  type: bool,  required: true }
+      - { id: obj_rent,      label: "Сдаётся ли квартира в аренду",  type: bool,  required: true }
+      - { id: obj_residence, label: "Характер проживания",           type: enum,  required: true, options: [ {value: permanent, label: "Постоянное"}, {value: non_permanent, label: "Непостоянное"}, {value: other, label: "Иное"} ] }
+      - { id: obj_fire_alarm, label: "Исправная пожарная сигнализация с выводом на пульт", type: bool, required: true }
+      - { id: obj_fire_supp,  label: "Исправная система пожаротушения", type: bool, required: true }
+      - { id: obj_fire_supp_type, label: "Тип системы пожаротушения", type: text, required: false, depends_on: { field: obj_fire_supp, equals: true } }
+      - { id: obj_guard,      label: "Договор охраны / исправная сигнализация с выводом на МВД или ЧОП", type: bool, required: true }
+      - { id: obj_guard_24,   label: "Круглосуточная охрана",        type: bool, required: false }
+      - { id: obj_concierge,  label: "Консьерж в подъезде",          type: bool, required: false }
+      - { id: obj_leak_control, label: "Система удалённого контроля протечки/перекрытия воды", type: bool, required: false }
+      - { id: obj_open_fire,  label: "Ведутся ли работы с открытым огнём/сваркой/строительные/ремонтные", type: bool, required: true, help: "Влияет на риск и возможность страхования" }
+      - { id: obj_repair_planned, label: "Планируются работы по отделке/ремонту", type: bool, required: false }
+      - { id: obj_water_25y,  label: "Срок службы водосодержащих систем более 25 лет без капремонта", type: bool, required: false }
+      - { id: obj_cracks,     label: "Наличие трещин, подтёков, пятен на потолке/стенах", type: bool, required: true, help: "Существующие повреждения могут быть исключены из покрытия" }
+      - { id: obj_nature_risk, label: "Природные опасности / опасное соседство", type: bool, required: false }
+      - { id: obj_nature_risk_desc, label: "Какие именно опасности", type: text, required: false, depends_on: { field: obj_nature_risk, equals: true } }
+      - { id: obj_multi_owner, label: "Помещение принадлежит 2 и более владельцам", type: bool, required: false }
+      - { id: obj_replanning,  label: "Была перепланировка/переустройство", type: bool, required: false }
+      - { id: obj_replanning_permit, label: "Есть разрешение на перепланировку", type: bool, required: false, depends_on: { field: obj_replanning, equals: true } }
+      - { id: obj_balcony_finish, label: "Отделка балконов/лоджий (материалы)", type: text, required: false }
+
+  - id: coverage
+    title: "Что страхуем (объекты страхования)"
+    fields:
+      - { id: cov_objects, label: "Выбранные объекты страхования", type: multi, required: true, help: "Можно выбрать несколько: конструктив/отделка/имущество/ответственность", options: [ {value: premises, label: "Помещение (квартира) — конструктив"}, {value: finishing, label: "Внутренняя отделка"}, {value: engineering, label: "Инженерное оборудование"}, {value: plumbing, label: "Сантехническое оборудование"}, {value: glazing, label: "Остекление"}, {value: household, label: "Домашнее имущество"}, {value: liability, label: "Гражданская ответственность"}, {value: title, label: "Титульное страхование (утрата права собственности)"} ] }
+
+  - id: engineering
+    title: "Инженерное оборудование (п.3.1)"
+    depends_on: { field: cov_objects, contains: engineering }
+    fields:
+      - { id: eng_items, label: "Что входит", type: multi, required: false, options: [ {value: water, label: "Водопровод"}, {value: heating, label: "Отопительное оборудование"}, {value: boiler, label: "Водонагревательное оборудование"}, {value: ac, label: "Стационарные кондиционеры"} ] }
+      - { id: eng_sum, label: "Страховая сумма по инж. оборудованию, руб.", type: money, required: false }
+
+  - id: finishing
+    title: "Внутренняя отделка, сантехника, остекление (п.3.2)"
+    depends_on: { field: cov_objects, contains: finishing }
+    help: "Описывается по каждому помещению: стены, потолок, полы, двери, оборудование/остекление"
+    fields:
+      - { id: fin_rooms, label: "Помещения с описанием отделки", type: group, group_of: room_finish, required: false }
+      - { id: fin_sum,   label: "Страховая сумма по отделке, руб.", type: money, required: false }
+      - { id: fin_share, label: "Доля отделки от общей страховой суммы по квартире, %", type: number, required: false }
+
+  - id: household
+    title: "Домашнее имущество"
+    depends_on: { field: cov_objects, contains: household }
+    fields:
+      - { id: hh_insured, label: "Домашнее имущество подлежит страхованию", type: bool, required: false }
+      - { id: hh_inventory, label: "Опись имущества прилагается", type: bool, required: false }
+      - { id: hh_sum, label: "Страховая сумма по домашнему имуществу, руб.", type: money, required: false }
+
+  - id: liability
+    title: "Гражданская ответственность"
+    depends_on: { field: cov_objects, contains: liability }
+    fields:
+      - { id: liab_kinds, label: "Виды покрытия ГО", type: multi, required: false, options: [ {value: life, label: "Вред жизни/здоровью третьих лиц"}, {value: property, label: "Вред имуществу третьих лиц"} ] }
+      - { id: liab_sum, label: "Страховая сумма по ГО, руб.", type: money, required: false }
+
+  - id: risks
+    title: "Страховые случаи (риски) и суммы"
+    fields:
+      - { id: risk_list, label: "Выбранные риски", type: multi, required: true, help: "Буквенные коды из заявления СОГАЗ", options: [ {value: O, label: "Огонь (О)"}, {value: OZ, label: "Огонь вкл. возгорание электропроводки (ОЗ)"}, {value: V, label: "Вода без протекания стен/крыши (В)"}, {value: VK, label: "Вода вкл. протекание стен/крыши (ВК)"}, {value: S, label: "Стихийные бедствия (С)"}, {value: PV, label: "Посторонние воздействия (ПВ)"}, {value: P1, label: "Противоправные действия — хищение (П1)"}, {value: P2, label: "Противоправные действия кроме хищения (П2)"}, {value: T, label: "Терроризм (Т)"}, {value: BS, label: "Бой стёкол (БС)"}, {value: GO, label: "ГО Пожар/взрыв (ГО)"}, {value: GV, label: "ГО Залив (ГВ)"}, {value: GA, label: "ГО Аварии при ремонте (ГА)"}, {value: TS, label: "Титульное страхование (ТС)"} ] }
+      - { id: sum_insured_total, label: "Общая страховая сумма, руб.", type: money, required: true }
+      - { id: underinsurance_pct, label: "Неполное имущественное страхование, % от стоимости", type: number, required: false }
+      - { id: currency, label: "Валюта договора", type: enum, required: false, options: [ {value: RUB, label: "Рубли"}, {value: USD_eq, label: "Рубли, экв. USD"}, {value: EUR_eq, label: "Рубли, экв. EUR"} ] }
+
+  - id: extra_terms
+    title: "Дополнительные условия"
+    fields:
+      - { id: term_debris,    label: "Расходы по расчистке (п.3.7)", type: bool, required: false }
+      - { id: term_expertise, label: "Расходы на проведение экспертизы (п.3.8)", type: bool, required: false }
+      - { id: term_no_wear,   label: "Выплата без учёта износа", type: bool, required: false }
+      - { id: term_one_case,  label: "Страхование на один страховой случай (п.5.12)", type: bool, required: false }
+      - { id: term_glass_in,  label: "Бой стёкол — предметы внутри помещения", type: bool, required: false }
+      - { id: term_glass_out, label: "Бой стёкол — предметы снаружи помещения", type: bool, required: false }
+      - { id: franchise,      label: "Безусловная франшиза, руб.", type: money, required: false }
+
+  - id: history
+    title: "Особые факторы (история)"
+    fields:
+      - { id: hist_damage_3y, label: "Был ли ущерб имуществу за последние 3 года", type: bool, required: true }
+      - { id: hist_damage_desc, label: "Описание ущерба", type: text, required: false, depends_on: { field: hist_damage_3y, equals: true } }
+      - { id: hist_other_policy, label: "Есть ли действующие/заключаемые договоры страхования этого имущества", type: bool, required: true }
+      - { id: hist_other_policy_desc, label: "Срок и страховая компания", type: text, required: false, depends_on: { field: hist_other_policy, equals: true } }
+
+  - id: contract
+    title: "Условия договора"
+    fields:
+      - { id: term_months, label: "Срок действия договора, месяцев", type: number, required: true, ai_hint: "по умолчанию 12" }
+      # Коды те же, что в house.yaml: периодичность выбирается сразу, отдельного
+      # вопроса про неё нет. Формулировки формы («Поквартальная рассрочка»)
+      # задаёт value_map карты полей.
+      - { id: payment_mode, label: "Порядок уплаты премии", type: enum, required: true, ai_hint: "по умолчанию раз в год — так оформляют в большинстве случаев", options: [ {value: yearly, label: "Раз в год (единовременно)"}, {value: quarterly, label: "Поквартально"}, {value: monthly, label: "Помесячно"} ] }
+
+# Повторяемый шаблон описания отделки одного помещения (для fin_rooms)
+groups:
+  room_finish:
+    title: "Отделка помещения"
+    fields:
+      - { id: room_name, label: "Название помещения", type: text, required: false, ai_hint: "санузел, кухня, гостиная и т.п." }
+      - { id: room_area, label: "Площадь помещения, м²", type: number, required: false }
+      - { id: room_walls,   label: "Стены (материал отделки)",   type: text, required: false, ai_hint: "обои/штукатурка/плитка/керамогранит и т.п." }
+      - { id: room_ceiling, label: "Потолок (материал отделки)", type: text, required: false, ai_hint: "побелка/натяжной/гипсокартон и т.п." }
+      - { id: room_floor,   label: "Полы (материал отделки)",    type: text, required: false, ai_hint: "плитка/паркет/ламинат/тёплый пол и т.п." }
+      - { id: room_doors,   label: "Двери (материал, тип)",      type: text, required: false }
+      - { id: room_glazing, label: "Остекление / сантехническое оборудование", type: text, required: false }
