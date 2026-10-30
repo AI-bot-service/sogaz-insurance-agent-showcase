@@ -1,235 +1,245 @@
-# AI Insurance Agent for SOGAZ
+# ИИ-агент страхования имущества для СОГАЗ
 
-A messenger AI agent that collects a property insurance application from the client and
-fills it into the insurer's portal by itself.
+**Русский** · [English](README.en.md)
+
+Агент в мессенджере собирает у клиента заявку на страхование имущества и сам вносит её
+в личный кабинет страховой компании.
 
 | | |
 |---|---|
-| **Client** | SOGAZ, one of Russia's largest insurers |
-| **Type** | Commercial project under NDA |
-| **Role** | Sole developer: from requirements to production support |
-| **Status** | In production |
-| **In this repo** | ~3,500 lines of the Python backend and the checklists, taken from the working repository as is |
+| **Заказчик** | СОГАЗ, одна из крупнейших страховых компаний России |
+| **Тип** | Коммерческий проект под NDA |
+| **Роль** | Единственный разработчик: от постановки задачи до сопровождения в бою |
+| **Статус** | В эксплуатации |
+| **В репозитории** | ~3500 строк Python-бэкенда и чек-листы, взятые из рабочего репозитория как есть |
 
-**Contents:** [Problem](#1-the-problem) · [Architecture](#2-architecture) · [My role](#3-my-role) · [What was removed](#4-what-was-removed-and-why) · [Recent work](#5-recent-work-septemberoctober-2026)
+**Содержание:** [Задача](#1-задача) · [Архитектура](#2-архитектура) · [Моя роль](#3-моя-роль) · [Что вычищено](#4-что-и-почему-вычищено) · [Развитие](#5-развитие-сентябрьоктябрь-2026)
 
-> The full code is private (NDA, production infrastructure and personal data of the
-> client's customers). What is published: the problem statement, the architecture, my
-> contribution and the backend without secrets or internal details of the client's systems,
-> with no edits "for the demo". The repository reads on its own: the decisions, their cost,
-> the scope and the quality are visible without access to the private part.
-
----
-
-## 1. The problem
-
-A SOGAZ insurance agent issues a "Personal Solution+" policy (apartment or house) by hand:
-calls the client, pulls several dozen property parameters out of them, then retypes them
-into the AdInsure portal form: several tabs, reference lists, dependent blocks. One policy
-means a conversation plus manual data entry, and a wrong field only shows up at the
-pricing step.
-
-What had to be built:
-
-- move data collection into a messenger, where the client is comfortable: text, voice
-  or a photo of a document;
-- collect not a "free story" but exactly the fields the insurer's form needs, in the format
-  it will accept;
-- answer the client's questions about the product along the way, based on official SOGAZ
-  documents rather than the model's general knowledge;
-- take the collected application all the way to a draft policy in the portal without
-  manual retyping.
-
-The constraint that shaped half of the architecture: **the AdInsure portal is IP-restricted
-and requires a second factor**. The server cannot reach it and does not store the portal
-password, so the auto-fill has to run on the agent's own machine, inside the browser
-session they have already signed into.
+> Полный код закрыт (NDA, боевая инфраструктура и персональные данные клиентов заказчика).
+> Здесь — постановка задачи, архитектура, мой вклад и бэкенд без секретов и внутренних
+> деталей систем заказчика, без правок «под демонстрацию». Репозиторий читается
+> самостоятельно: решения, их цена, объём и качество видны без доступа к закрытой части.
 
 ---
 
-## 2. Architecture
+## 1. Задача
+
+Страховой агент СОГАЗ оформляет полис по продукту «Персональное решение+»
+(квартира или дом) вручную: созванивается с клиентом, вытягивает из него
+несколько десятков параметров объекта, а затем перепечатывает их в форму
+личного кабинета AdInsure — несколько вкладок, справочники, зависимые блоки.
+Один полис — это разговор плюс ручной ввод, и ошибка в поле всплывает уже на
+расчёте.
+
+Что требовалось сделать:
+
+- перенести сбор данных в мессенджер, где клиенту удобно: текстом, голосом
+  или фотографией документа;
+- собирать не «свободный рассказ», а ровно те поля, которые нужны форме
+  страховой, и в том виде, в каком она их примет;
+- параллельно отвечать на вопросы клиента по продукту — по официальным
+  документам СОГАЗ, а не по общим знаниям модели;
+- довести собранную заявку до проекта полиса в личном кабинете без ручного
+  перепечатывания.
+
+Осложняющее условие, определившее половину архитектуры: **личный кабинет
+AdInsure закрыт по IP и требует второй фактор**. Сервер в него не ходит и
+пароль от портала не хранит — значит, автозаполнение обязано выполняться на
+машине живого агента, в уже авторизованной им сессии браузера.
+
+---
+
+## 2. Архитектура
 
 ```
-client → Telegram / MAX → dialogue engine → application in DB → task queue
-          (messenger)       (server)              │                (server)
-                                                  │                    ↓
-                                                  ↓     Windows agent on the insurance agent's machine
-                                         deal in amoCRM                ↓
-                                  + notifications to the manager   AdInsure form in their browser
+клиент → Telegram / MAX → диалоговый движок → заявка в БД → очередь задач
+          (мессенджер)      (сервер)              │            (сервер)
+                                                  │                ↓
+                                                  ↓   Windows-агент на машине страхового агента
+                                     сделка в amoCRM               ↓
+                             + уведомления менеджеру   форма AdInsure в его браузере
 ```
 
-Key decisions and why:
+Ключевые решения и причины:
 
-**The checklist is the single source of truth.** `checklists/{flat,house}.yaml`:
-71 fields in 11 sections for an apartment, 68 fields in 9 sections for a house. Source:
-official SOGAZ application forms. The same YAML is read by the dialogue engine, by value
-normalisation and by the confirmation summary; the dialogue code contains no fields at all.
-A product change is a YAML change. Conditional visibility (`depends_on`) and repeating
-blocks are supported (buildings on a plot are a group, not a fixed set of fields).
+**Чек-лист — единственный источник истины.** `checklists/{flat,house}.yaml`:
+71 поле в 11 разделах для квартиры, 68 полей в 9 разделах для дома. Источник —
+официальные формы-заявления СОГАЗ. Один и тот же YAML читают движок диалога,
+оцифровка значений и сводка на подтверждение; в коде диалога полей нет вообще.
+Правка продукта — правка YAML. Поддержаны условная видимость (`depends_on`) и
+повторяющиеся блоки (строения на участке — группа, а не фиксированные поля).
 
-**Tool-calling dialogue, not a scenario tree.** `bot/engine.py`: the model receives the
-checklist state and the tools `set_object_type`, `set_fields`, `add_group_item`, `consult`.
-A client can give five parameters in one sentence, drift off to ask about the deductible and
-come back. The checklist sets the order, not a rigid script. Voice is transcribed with
-Whisper, photos are parsed by a vision model.
+**Диалог на tool-calling, а не сценарий-дерево.** `bot/engine.py`: модель
+получает состояние чек-листа и инструменты `set_object_type`, `set_fields`,
+`add_group_item`, `consult`. Клиент может выдать пять параметров одной фразой,
+свернуть в сторону вопроса о франшизе и вернуться обратно — порядок ведёт
+чек-лист, а не жёсткий сценарий. Голос распознаётся через Whisper, фото
+разбирает vision-модель.
 
-**Values are coerced to the form field type, not to a "readable" format.**
-`digitize/coerce.py`: dates to ISO, phone numbers to `+7XXXXXXXXXX`, a passport split into
-series / number / issue date / issued by / unit code, because the insurer's party card has
-separate fields for them. Addresses are normalised through DaData to the FIAS registry
-format (`services/address.py`): the form picks an address from suggestions and does not
-parse free text. A doubtful value is asked again, never filled in for the client.
+**Значения приводятся к типу поля формы, а не к «читаемому виду».**
+`digitize/coerce.py`: дата — в ISO, телефон — в `+7XXXXXXXXXX`, паспорт разнесён
+на серию/номер/дату/кем выдан/код подразделения, потому что в карточке
+контрагента СК это отдельные поля. Адрес нормализуется через DaData до вида
+справочника ФИАС (`services/address.py`): форма выбирает адрес из подсказки и
+произвольный текст не разбирает. Сомнительное значение бот переспрашивает, а не
+дописывает за клиента.
 
-**Product consultation is RAG over product documents.** pgvector; the knowledge base is
-the insurance rules, key information document, customer memo and policy, separately for
-apartment and house (`rag/indexer.py`, `rag/retriever.py`). Product answers come from the
-client's documents, not from the model's head.
+**Консультация — RAG по документам продукта.** pgvector, база знаний — Правила
+страхования, КИД, Памятка, Полис, отдельно для квартиры и дома
+(`rag/indexer.py`, `rag/retriever.py`). Ответ про продукт идёт из документов
+заказчика, не из головы модели.
 
-**Handing the application to the insurer is a swappable implementation.** `calc/base.py` +
-`calc/providers.py`, switched by config: `rpa` (auto-fill in the browser), `sogaz_api`
-(the agent API, once it is opened), `manual` (an operator). The product is chosen by the
-client's business rule: the boxed product or "Personal Solution+" depending on sum insured
-and region (`calc/product_choice.py`).
+**Передача заявки в СК — сменная реализация.** `calc/base.py` +
+`calc/providers.py`, переключение конфигом: `rpa` (автозаполнение через
+браузер), `sogaz_api` (агентское API, когда откроют), `manual` (оператор).
+Продукт выбирается бизнес-правилом заказчика — коробка или «Персональное
+решение+» в зависимости от страховой суммы и региона (`calc/product_choice.py`).
 
-**Form filling runs on the agent's machine.** The server only puts a task in the queue;
-an external Windows agent picks it up with its machine token, works inside the person's
-signed-in browser session and reports the result. This gets around the IP filter and the
-second factor, and the portal password is never stored on the server.
+**Заполнение вынесено на машину агента.** Сервер только кладёт задачу в очередь;
+внешний Windows-агент забирает её по токену своей машины, работает в
+авторизованной сессии браузера человека и отчитывается о результате. Так
+обходится IP-фильтр и второй фактор, и пароль от портала нигде на сервере не
+лежит.
 
-**Security.** Tokens are compared in constant time, logs get only a fingerprint (first 8
-characters of sha256). An empty or too-short token never turns into open access: the app
-answers 503. Endpoints with personal data are token-protected even on localhost.
-Containers run as non-root, the API is exposed only through Traefik.
+**Безопасность.** Токены сравниваются constant-time, в логи попадает только
+отпечаток (первые 8 символов sha256). Пустой или слишком короткий токен не
+превращается в открытый доступ — приложение отвечает 503. Эндпоинты с
+персональными данными закрыты токеном даже на localhost. Контейнеры non-root,
+API наружу только через Traefik.
 
-Full breakdown: [ARCHITECTURE.md](ARCHITECTURE.md).
+Подробный разбор — [ARCHITECTURE.md](ARCHITECTURE.md).
 
-**Stack.** Python 3.12, FastAPI, SQLAlchemy 2.0 (async) + PostgreSQL/pgvector, Redis,
-aiogram 3 (Telegram), a custom Bot API client for the MAX messenger on httpx, OpenAI
-(`gpt-4o-mini` for dialogue and vision, `whisper-1` for speech, `text-embedding-3-small` for
-embeddings), Playwright (RPA), DaData, Docker Compose, Traefik.
+**Стек.** Python 3.12, FastAPI, SQLAlchemy 2.0 (async) + PostgreSQL/pgvector,
+Redis, aiogram3 (Telegram), собственный клиент Bot API мессенджера MAX на httpx,
+OpenAI (`gpt-4o-mini` — диалог и vision, `whisper-1` — речь,
+`text-embedding-3-small` — эмбеддинги), Playwright (RPA), DaData,
+Docker Compose, Traefik.
 
-### Where things are
+### Где что лежит
 
 ```
 src/
-  main.py         FastAPI application assembly
-  core/           configuration, DB, access token checks
-  bot/            dialogue engine, Telegram and MAX channels, shared runtime
-  checklists/     YAML checklists of application fields + loader
-  calc/           application hand-off abstraction (RPA / API / operator), product choice
-  digitize/       value coercion to field types, speech recognition
-  rag/            embeddings, knowledge base indexing, search
-  services/       consultation, verification, LLM wrapper, dialogue history
-  models/         application, dialogue, agent task and knowledge base models
-  schemas/        API schemas
+  main.py         сборка FastAPI-приложения
+  core/           конфигурация, БД, проверка токенов доступа
+  bot/            диалоговый движок, каналы Telegram и MAX, общий рантайм
+  checklists/     YAML-чек-листы полей заявки + загрузчик
+  calc/           абстракция передачи заявки (RPA / API / оператор), выбор продукта
+  digitize/       приведение значений к типу поля, распознавание речи
+  rag/            эмбеддинги, индексация базы знаний, поиск
+  services/       консультация, верификация, LLM-обвязка, история диалога
+  models/         модели заявки, диалога, задач агента, базы знаний
+  schemas/        схемы API
 ```
 
 ---
 
-## 3. My role
+## 3. Моя роль
 
-Sole developer on the project: requirements together with the client, architecture, all
-the code, infrastructure and production support.
+Единственный разработчик проекта: постановка вместе с заказчиком, архитектура,
+весь код, инфраструктура и сопровождение в бою.
 
-Designed and built:
+Спроектировал и написал:
 
-- the tool-calling dialogue engine on top of OpenAI and two channels, Telegram and MAX
-  (MAX has no ready SDK, so the Bot API client was written from scratch; the scenario is
-  shared, the messenger only receives and sends messages);
-- declarative checklists and their loader: conditional visibility, repeating groups,
-  finding the next empty field, collection progress;
-- input digitisation: voice via Whisper, photos via vision, value coercion to the insurer's
-  form types, address normalisation via DaData, re-asking doubtful values;
-- RAG consultation over product documents on pgvector;
-- the data schema and the service API of the task queue for the external agent;
-- the Windows agent that auto-fills the AdInsure form with Playwright (~13,600 lines):
-  attaching to the person's browser, finding fields by label in re-rendering Angular
-  markup, handling `ng-select` dropdowns, self-update, recording a pass over the form for
-  debugging;
-- the field map "checklist code → AdInsure form field" (~1,200 lines, about 70 fields) and
-  per-tab fill plans extracted from the form metadata, with tools to build them and to check
-  an application against the form before the browser starts;
-- export of applications to amoCRM and notifications to the manager in MAX and Telegram;
-- infrastructure: Docker Compose, Traefik, shared PostgreSQL and Redis, rollout and updates
-  of the agent on the insurance agents' machines.
+- диалоговый движок на tool-calling поверх OpenAI и два канала — Telegram и
+  MAX (для MAX готового SDK нет, клиент Bot API написан с нуля; сценарий у
+  каналов общий, мессенджер только принимает и отправляет сообщения);
+- декларативные чек-листы и их загрузчик — условная видимость, повторяющиеся
+  группы, поиск следующего незаполненного поля, прогресс сбора;
+- оцифровку ввода: голос через Whisper, фото через vision, приведение значений
+  к типам формы страховой, нормализацию адресов через DaData, переспрос
+  сомнительных значений;
+- RAG-консультацию по документам продукта на pgvector;
+- схему данных и служебное API очереди задач для внешнего агента;
+- Windows-агент автозаполнения формы AdInsure на Playwright (~13 600 строк) —
+  подключение к браузеру человека, поиск полей по подписи в перерисовываемой
+  Angular-разметке, работа со списками `ng-select`, самообновление, запись
+  прохода по форме для отладки;
+- карту полей «код чек-листа → поле формы AdInsure» (~1200 строк, около 70
+  полей) и снятые из метаданных формы планы заполнения по её вкладкам, с
+  инструментами их сборки и сверки заявки с формой до запуска браузера;
+- выгрузку заявок в amoCRM и уведомления менеджеру в MAX и Telegram;
+- инфраструктуру: Docker Compose, Traefik, общие PostgreSQL и Redis,
+  раскатку и обновление агента на машинах страховых агентов.
 
-I also ran a security audit of the project and fixed what it found: the service API was
-returning personal data without authorisation, because the token check was declared as an
-endpoint parameter and fired only after the DB session had been opened.
+Отдельно провёл аудит безопасности проекта и закрыл найденное: служебное API
+отдавало персональные данные без авторизации, потому что проверка токена была
+объявлена параметром эндпоинта и срабатывала уже после открытия сессии БД.
 
 ---
 
-## 4. What was removed and why
+## 4. Что и почему вычищено
 
-The backend is published. What belongs to the client or contains their customers' personal
-data is not. In the private repository these paths are closed by explicit deny rules,
-including against reads by the coding assistant during work sessions.
+Публикуется бэкенд. Не публикуется то, что принадлежит заказчику или содержит
+персональные данные его клиентов — в приватном репозитории эти пути закрыты
+явными deny-правилами, в том числе от чтения ассистентом в рабочих сессиях.
 
-| Not published | Why |
+| Что не выложено | Почему |
 |---|---|
-| AdInsure form field map (`fieldmap.yaml`, `docs/adinsure_fields/`, `docs/asset_FL/`) and the HAR dumps it was extracted from | It is the structure of the client's internal portal form, obtained while working with their closed system |
-| Form-filling Windows agent (`agent/`) | Useless and unsafe without the field map above; contains the logic of working inside a live portal session |
-| Form pass recordings and snapshots of the live portal (`records/`, `dumps/`) | Personal data of the client's customers |
-| Admin and agent-queue API routers (`api/v1/agent*.py`, `applications.py`, `checklists.py`) | They handle personal data and the task queue of external machines |
-| Product documents: insurance rules, key information document, memo, application forms | Client materials provided for internal use; only the indexing and search pipeline is shown |
-| amoCRM integration (`crm/`) | The mapping is tied to the client's pipeline, stages and CRM fields |
-| Secrets: `.env`, OpenAI, DaData and amoCRM keys, agent machine tokens | For obvious reasons |
+| Карта полей формы AdInsure (`fieldmap.yaml`, `docs/adinsure_fields/`, `docs/asset_FL/`) и HAR-дампы, из которых она снята | Это структура внутренней формы личного кабинета заказчика, полученная при работе с его закрытой системой |
+| Windows-агент заполнения (`agent/`) | Бесполезен и небезопасен в отрыве от карты полей выше; содержит логику работы в боевой сессии портала |
+| Записи прохода по форме и снимки боевого ЛК (`records/`, `dumps/`) | Персональные данные клиентов заказчика |
+| API-роутеры админки и очереди агента (`api/v1/agent*.py`, `applications.py`, `checklists.py`) | Работают с персональными данными и с очередью задач внешних машин |
+| Документы продукта: Правила страхования, КИД, Памятка, формы заявлений | Материалы заказчика, переданы для внутреннего использования; в репозитории показан только пайплайн индексации и поиска по ним |
+| Интеграция с amoCRM (`crm/`) | Карта завязана на воронку, этапы и поля CRM заказчика |
+| Секреты: `.env`, ключи OpenAI, DaData и amoCRM, токены доступа машин агента | По очевидной причине |
 
-What this means when reading the code: `calc/rpa_runner.py` is a real file from the working
-repository, but the `FLAT_FIELD_MAP` / `HOUSE_FIELD_MAP` selector maps in it remain an empty
-skeleton with `TODO`. The same is true in the private repository: production selectors
-live not in code but in the separate field map from the table above, and the agent
-substitutes them on the insurance agent's machine. No execution branch was cut out here;
-the file is shown in full.
+Что это значит при чтении кода: `calc/rpa_runner.py` — реальный файл рабочего
+репозитория, но карты селекторов `FLAT_FIELD_MAP` / `HOUSE_FIELD_MAP` в нём
+остаются пустым каркасом с `TODO`. Так и в приватном репозитории: боевые
+селекторы живут не в коде, а в отдельной карте полей из таблицы выше, и
+подставляются агентом на машине страхового агента. Никакой ветки исполнения
+здесь не вырезано — файл показан целиком.
 
-Everything else (dialogue engine, checklists, digitisation, RAG, the pricing provider
-abstraction, token security) is published in full and works the same as in production.
+Всё остальное — движок диалога, чек-листы, оцифровка, RAG, абстракция
+провайдеров расчёта, безопасность токенов — выложено полностью и работает так
+же, как в бою.
 
-The full code, including the closed parts, is in the private repository
-`AI-bot-service/sogaz-insurance-agent`. Access on request.
+Полный код, включая закрытые части, — приватный репозиторий
+`AI-bot-service/sogaz-insurance-agent`. Доступ предоставляется по запросу.
 
 ---
 
-## 5. Recent work (September–October 2026)
+## 5. Развитие (сентябрь–октябрь 2026)
 
-The code of these parts is not in the showcase (see section 4); here is what was done and why.
+Код этих частей в витрину не выложен (см. раздел 4), здесь — что сделано и зачем.
 
-**Export to amoCRM.** An application becomes a deal in the client's pipeline. The stage is
-derived from the application state (object chosen → cost named → price known → data
-collected → policy → invoice issued), deal fields are filled from the checklist, and the
-conversation with the client goes in as notes. The stage only moves forward: a step back in
-the pipeline reads to the manager as a lost client. The bot does not confirm payment; it
-passes the client's words on to the manager. The integration does not create the pipeline or
-fields; it finds them through a YAML map with fuzzy name matching. If the client renames a
-stage, the YAML changes, not the code. If a field is missing, there is a warning at startup
-and everything else keeps working.
+**Выгрузка в amoCRM.** Заявка становится сделкой в воронке заказчика: этап
+считается по состоянию заявки (объект выбран → стоимость названа → цена
+известна → данные собраны → полис → счёт выставлен), поля сделки заполняются из чек-листа, переписка с
+клиентом идёт примечаниями. Этап двигается только вперёд: откат в воронке
+менеджер читает как потерю клиента. Оплату бот не подтверждает — передаёт
+менеджеру слова клиента. Воронку и поля интеграция не создаёт, а находит по
+YAML-карте с нестрогой сверкой имён: заказчик переименовал этап — правится
+YAML, а не код. Не нашлось поле — предупреждение при старте, остальное
+работает.
 
-**Hand-off to a human.** On every hand-off and every failure, the manager gets a notification
-in MAX or Telegram: who the client is (profile link), at which step, what happened. The
-manager can take over the conversation in the messenger.
+**Передача человеку.** На каждой передаче заявки и любом сбое менеджер получает
+уведомление в MAX или Telegram: кто клиент (ссылка на профиль), на каком шаге,
+что случилось. Менеджер может перехватить разговор в мессенджере.
 
-**House data without asking the client.** The agent finds the house in GIS ZhKKh (the state
-housing registry) by address and takes the construction year, number of floors, cadastral
-number and wear from it, so the client does not have to remember them. The client's business
-rule (the boxed product does not cover houses built before 1950, only "Personal Solution"
-does) is a programme selection criterion, not a manual check.
+**Данные дома без вопросов клиенту.** Агент находит дом в ГИС ЖКХ по адресу и
+берёт из выдачи год постройки, этажность, кадастровый номер и износ — клиенту
+не нужно это вспоминать. Бизнес-правило заказчика (дома постройки ранее 1950
+года коробочный продукт не берёт, только «Персональное решение») — критерий
+выбора программы, а не ручная проверка.
 
-**Summary with edits by number.** Before sending, the client sees a numbered summary and
-fixes any field with one message, "5 — 72 sq m", instead of going through the questions
-again. One client's turns are processed strictly in order, so quick button taps don't lose
-answers.
+**Сводка с правкой по номеру.** Перед отправкой клиент видит нумерованную
+сводку и правит любое поле одним сообщением «5 — 72 кв. м», а не проходит
+опрос заново. Ходы одного клиента обрабатываются строго по очереди: быстрые
+нажатия кнопок не теряют ответы.
 
-**Bot questions come from the client's spreadsheet.** The client maintains the wording and
-hints in their own spreadsheet; a snapshot of it is checked against the checklist, and
-mismatches are visible before release.
+**Вопросы бота — из таблицы заказчика.** Формулировки и пояснения ведёт
+заказчик в своей таблице; снимок таблицы сверяется с чек-листом, расхождения
+видны до выката.
 
-**Agent console and form diagnostics.** The insurance agent's machine runs a console: the
-application queue from the server, opening the portal, checking a single form field against
-the spec in the task. The check tells "field missing from the map" from "field missing from
-the form", measures the value twice (immediately and after the form recalculates), and
-records a fingerprint of the field map version the agent received. A filling error is then
-analysed from the report, without access to the live session.
+**Пульт агента и диагностика формы.** На машине страхового агента — пульт:
+очередь заявок с сервера, открытие портала, проверка отдельного поля формы
+по спецификации из задачи. Проверка отличает «поля нет в карте» от «поля нет
+на форме», меряет значение дважды (сразу и после пересчёта формы) и пишет
+отпечаток версии карты полей, которую получил агент. Так ошибка заполнения
+разбирается по отчёту, без доступа к боевой сессии.
 
-**Visual scenario editor.** A separate project: the survey scenario on a canvas (nodes
-"question", "write field", "bot reply", constants), with a draft run in a test bot that does
-not affect the production one.
+**Визуальный редактор сценария.** Отдельный проект: сценарий опроса на холсте
+(узлы «вопрос», «записать поле», «ответ бота», константы), прогон черновика в
+тестовом боте без влияния на рабочий.
+

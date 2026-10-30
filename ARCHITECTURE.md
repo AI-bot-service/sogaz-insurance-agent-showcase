@@ -1,70 +1,79 @@
-# Architecture
+# Архитектура
+
+**Русский** · [English](ARCHITECTURE.en.md)
 
 ## Backend
-Python 3.12, FastAPI (service API) + Telegram (aiogram 3) and MAX bots (a custom Bot API
-client on httpx, `bot/max_api.py`). Both channels run in one process on long polling
-(`bot/runner.py`); the dialogue scenario is shared (`bot/dialog.py`, `bot/engine.py`),
-and the messengers only receive messages and send replies. A channel is enabled by the
-presence of its token in settings (`TELEGRAM_BOT_TOKEN`, `MAX_BOT_TOKEN`).
+Python 3.12, FastAPI (служебный API) + боты Telegram (aiogram3) и MAX (свой
+клиент Bot API на httpx, `bot/max_api.py`). Оба канала работают в одном
+процессе на long polling (`bot/runner.py`); сценарий диалога общий
+(`bot/dialog.py`, `bot/engine.py`) — мессенджеры только принимают сообщения и
+отправляют ответы. Канал включается наличием токена в настройках
+(`TELEGRAM_BOT_TOKEN`, `MAX_BOT_TOKEN`).
 
 ## LLM
-A single provider, OpenAI: chat + vision (`gpt-4o-mini`), speech recognition
-(`whisper-1`), embeddings (`text-embedding-3-small`). It can be switched to OpenRouter
-(`LLM_PROVIDER=openrouter`) without code changes.
+Единый провайдер OpenAI: чат + vision (`gpt-4o-mini`), распознавание речи
+(`whisper-1`), эмбеддинги (`text-embedding-3-small`). Есть опция переключения
+на OpenRouter (`LLM_PROVIDER=openrouter`) без изменения кода.
 
 ## RAG
-pgvector; the knowledge base is the official SOGAZ product documents (insurance rules,
-key information document, customer memo, policy, separately for apartment and house).
-The documents themselves are not published (see README), but the indexing and search
-pipeline, `rag/indexer.py` and `rag/retriever.py`, is shown in full.
+pgvector; база знаний — официальные документы СОГАЗ по продукту (Правила,
+КИД, Памятка, Полис — отдельно для квартиры и дома). Сами документы не
+публикуются (см. README), но пайплайн индексации и поиска — `rag/indexer.py`
+и `rag/retriever.py` — показаны целиком.
 
-## Core: declarative checklists
-`checklists/{flat,house}.yaml` is the single source of truth for application fields
-(source: official SOGAZ application forms). It is used by the dialogue engine, by
-digitisation and by verification. Reading logic is in `checklists/loader.py`
-(conditional field visibility via `depends_on`, finding the next empty field, collection
-progress). Fields change only in YAML, never hardcoded in the dialogue code.
+## Ядро — декларативные чек-листы
+`checklists/{flat,house}.yaml` — единственный источник истины по полям
+заявки (источник: официальные формы-заявления СОГАЗ). Используется движком
+диалога, оцифровкой и верификацией. Логика чтения — `checklists/loader.py`
+(условная видимость полей через `depends_on`, поиск следующего
+незаполненного поля, прогресс сбора). Менять поля — только в YAML, без
+хардкода в коде диалога.
 
-## Application flow
-1. The client writes to the bot (Telegram or MAX) → the object type is determined
-   (apartment / house).
-2. The engine (`bot/engine.py`) runs the dialogue over the checklist with OpenAI
-   tool-calling: `set_object_type`, `set_fields`, `add_group_item`, `consult` (RAG).
-3. Voice is transcribed with Whisper (`digitize/stt.py`), photos are parsed by the vision
-   model directly in the engine. Values are coerced to the field type
-   (`digitize/coerce.py`); doubtful ones are asked again.
-4. `address` fields are normalised through DaData suggestions (`services/address.py`):
-   in the insurer's form an address is picked from a registry, not typed as free text.
-5. When all required fields are collected, the client sees a summary to confirm
-   (`services/verify.py`).
-6. After confirmation, the product is chosen by the client's business rule
-   (`calc/product_choice.py`: the boxed product or "Personal Solution+", depending on sum
-   insured and region) and the application is handed on through `CalcProvider`.
+## Поток обработки заявки
+1. Клиент пишет боту (Telegram или MAX) → определяется тип объекта
+   (квартира/дом).
+2. Движок (`bot/engine.py`) ведёт диалог по чек-листу через tool-calling
+   OpenAI: `set_object_type`, `set_fields`, `add_group_item`, `consult` (RAG).
+3. Голос распознаётся через Whisper (`digitize/stt.py`), фото разбирается
+   vision-моделью прямо в движке. Значения приводятся к типу поля
+   (`digitize/coerce.py`); сомнительные — переспрашиваются.
+4. Поля типа `address` нормализуются через подсказки DaData
+   (`services/address.py`) — в форме страховой компании адрес выбирается из
+   справочника, а не вводится произвольным текстом.
+5. Когда все обязательные поля собраны — клиенту показывается сводка на
+   подтверждение (`services/verify.py`).
+6. После подтверждения выбирается продукт по бизнес-правилу заказчика
+   (`calc/product_choice.py`: коробочный продукт или «Персональное решение+»
+   в зависимости от страховой суммы и региона) и заявка передаётся дальше
+   через `CalcProvider`.
 
-## Handing the application to the insurer: the CalcProvider abstraction
-`calc/base.py` + `calc/providers.py` define a common interface; implementations are
-switched by the `CALC_PROVIDER` config:
+## Передача заявки в страховую компанию — абстракция CalcProvider
+`calc/base.py` + `calc/providers.py` описывают общий интерфейс, реализации
+переключаются конфигом `CALC_PROVIDER`:
 
-- `sogaz_api`: the SOGAZ agent API (when available);
-- `rpa`: auto-filling the insurer's portal with Playwright (`calc/rpa_runner.py`). The
-  portal is closed to the server by IP, so in production the auto-fill is done by an
-  external Windows agent on the insurance agent's machine, not by the server itself;
-- `manual`: fallback, the application goes to an operator.
+- `sogaz_api` — агентское API СОГАЗ (когда доступно);
+- `rpa` — автозаполнение личного кабинета страховой компании через Playwright
+  (`calc/rpa_runner.py`) — личный кабинет закрыт для сервера по IP, поэтому
+  автозаполнение в проде выполняет внешний Windows-агент на машине
+  страхового агента, а не сам сервер;
+- `manual` — fallback: заявка уходит оператору.
 
-The map of portal form fields and selectors (extracted from HAR dumps of the live form)
-is not published; see README, section "What was removed and why".
+Карта полей и селекторов формы личного кабинета (снятая по HAR-дампам живой
+формы) в публичной части не выкладывается — см. README, раздел «Что и
+почему вычищено».
 
-## Security
-- Non-root in the Dockerfile, API only on `127.0.0.1` behind Traefik.
-- Tokens are compared in constant time (`core/security.py`); logs get only fingerprints
-  (first 8 characters of sha256), never the tokens themselves.
-- An empty or too-short token in settings never turns into open access: the app answers
-  503 instead of letting the request through.
-- Endpoints with clients' personal data are token-protected even when running only on
-  localhost.
-- `.env` is never committed, only `.env.example`.
+## Безопасность
+- Non-root в Dockerfile, API только на `127.0.0.1` за Traefik.
+- Токены сравниваются constant-time (`core/security.py`), в логи попадают
+  только отпечатки (первые 8 символов sha256), не сами токены.
+- Пустой или слишком короткий токен в настройках не превращается в открытый
+  доступ — приложение отвечает 503, а не пропускает запрос.
+- Эндпоинты с персональными данными клиентов защищены токеном даже при
+  работе только на localhost.
+- `.env` не коммитится, только `.env.example`.
 
-## Infrastructure
-Docker Compose, shared PostgreSQL/Redis, Traefik as the reverse proxy. The bots run on
-polling, so they don't need to be exposed; only the service API for the external
-Windows agent is published through Traefik.
+## Инфраструктура
+Docker Compose, shared PostgreSQL/Redis, Traefik как reverse proxy. Боты
+работают на polling, поэтому публикация наружу самим ботам не требуется —
+наружу через Traefik открыт только служебный API для внешнего
+Windows-агента.
